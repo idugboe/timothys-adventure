@@ -28,7 +28,7 @@ class Adventure extends Phaser.Scene {
   constructor(){super('adventure');}
   create(){
     this.score=0; this.health=3; this.levelIndex=0; this.best=this.readBest(); this.muted=false; this.audioCtx=null;
-    this.makeTextures(); this.makeMenu();
+    this.levelColliders=[];this.makeTextures();this.makeMenu();
     this.keys=this.input.keyboard.addKeys('LEFT,RIGHT,UP,SPACE,A,D,W,ESC');
     this.input.on('pointerdown',()=>this.unlockAudio());
   }
@@ -57,19 +57,19 @@ class Adventure extends Phaser.Scene {
   unlockAudio(){if(!this.audioCtx){const AC=window.AudioContext||window.webkitAudioContext;if(AC)this.audioCtx=new AC();}if(this.audioCtx?.state==='suspended')this.audioCtx.resume();}
   tone(kind){if(this.muted)return;this.unlockAudio();if(!this.audioCtx)return;const ctx=this.audioCtx,now=ctx.currentTime;const presets={jump:[540,.09,'square'],coin:[880,.12,'sine'],stomp:[180,.13,'triangle'],hurt:[120,.22,'sawtooth'],victory:[660,.35,'sine']};const [freq,duration,type]=presets[kind]||presets.coin;const osc=ctx.createOscillator(),gain=ctx.createGain();osc.type=type;osc.frequency.setValueAtTime(freq,now);if(kind==='coin'||kind==='victory')osc.frequency.exponentialRampToValueAtTime(freq*1.5,now+duration);gain.gain.setValueAtTime(.0001,now);gain.gain.exponentialRampToValueAtTime(.12,now+.012);gain.gain.exponentialRampToValueAtTime(.0001,now+duration);osc.connect(gain);gain.connect(ctx.destination);osc.start(now);osc.stop(now+duration+.02);}
   startLevel(){
-    this.children.removeAll(true);this.physics.world.resume();this.isPaused=false;this.isGameOver=false;this.transitioning=false;this.jumpHeld=false;this.isPlaying=true;this.level=LEVELS[this.levelIndex];
+    for(const collider of this.levelColliders||[])collider.destroy();this.levelColliders=[];this.children.removeAll(true);this.physics.world.resume();this.isPaused=false;this.isGameOver=false;this.transitioning=false;this.jumpHeld=false;this.isPlaying=true;this.level=LEVELS[this.levelIndex];
     this.physics.world.setBounds(0,0,this.level.width,H+220);this.cameras.main.setBounds(0,0,this.level.width,H);this.cameras.main.setBackgroundColor(this.levelIndex===1?'#171d3c':this.levelIndex===2?'#342044':'#241044');
-    this.platforms=this.physics.add.staticGroup();for(const [x,y,w] of this.level.platforms){for(let px=x;px<x+w;px+=32){const tile=this.platforms.create(px+16,y,'ground');tile.setOrigin(.5,.5).refreshBody();}}
-    this.player=this.physics.add.sprite(70,420,'hero').setDepth(5);this.player.setCollideWorldBounds(false);this.player.body.setSize(22,36).setOffset(6,5);this.player.setMaxVelocity(260,700);this.player.setBounce(0);
-    this.physics.add.collider(this.player,this.platforms);
+    this.platforms=this.physics.add.staticGroup();this.levelColliders=[];for(const [x,y,w] of this.level.platforms){for(let px=x;px<x+w;px+=32){const tile=this.platforms.create(px+16,y,'ground');tile.setOrigin(.5,.5).refreshBody();}}
+    this.player=this.physics.add.sprite(70,420,'hero').setDepth(5);this.player.setCollideWorldBounds(true);this.player.body.setSize(22,36).setOffset(6,5);this.player.setMaxVelocity(260,700);this.player.setBounce(0);
+    this.levelColliders.push(this.physics.add.collider(this.player,this.platforms));
     this.coins=this.physics.add.staticGroup();for(const [x,y] of this.level.coins){const c=this.coins.create(x,y,'coin');c.refreshBody();}
-    this.physics.add.overlap(this.player,this.coins,(_,coin)=>{if(!coin.active)return;coin.disableBody(true,true);this.score+=10;this.saveBest();this.tone('coin');this.refreshHud();});
+    this.levelColliders.push(this.physics.add.overlap(this.player,this.coins,(_,coin)=>{if(!coin.active)return;coin.disableBody(true,true);this.score+=10;this.saveBest();this.tone('coin');this.refreshHud();}));
     this.enemies=this.physics.add.group({allowGravity:false,immovable:true});for(const [x,y,min,max] of this.level.enemies){const e=this.enemies.create(x,y,'enemy');e.setSize(28,24).setOffset(3,4);e.patrol={min,max};e.direction=1;e.setVelocityX(this.level.speed);}
-    this.physics.add.collider(this.enemies,this.platforms);
-    this.physics.add.overlap(this.player,this.enemies,(p,e)=>this.hitEnemy(p,e));
+    this.levelColliders.push(this.physics.add.collider(this.enemies,this.platforms));
+    this.levelColliders.push(this.physics.add.overlap(this.player,this.enemies,(p,e)=>this.hitEnemy(p,e)));
     this.hazards=this.physics.add.staticGroup();for(const [x,y,w] of this.level.spikes){for(let px=x;px<x+w;px+=28){const spike=this.hazards.create(px+14,y,'spike');spike.refreshBody();}}
-    this.physics.add.overlap(this.player,this.hazards,()=>this.hurt());
-    const [ex,ey]=this.level.exit;this.exit=this.physics.add.staticImage(ex,ey,'exit');this.exit.refreshBody();this.physics.add.overlap(this.player,this.exit,()=>this.finishLevel());
+    this.levelColliders.push(this.physics.add.overlap(this.player,this.hazards,()=>this.hurt()));
+    const [ex,ey]=this.level.exit;this.exit=this.physics.add.staticImage(ex,ey,'exit');this.exit.refreshBody();this.levelColliders.push(this.physics.add.overlap(this.player,this.exit,()=>this.finishLevel()));
     this.cameras.main.startFollow(this.player,true,.12,.12);
     this.makeHud();this.makeTouchControls();this.refreshHud();
   }
@@ -91,7 +91,7 @@ class Adventure extends Phaser.Scene {
   update(){if(!this.isPlaying||this.isPaused||!this.player?.active)return;const k=this.keys;const left=this.touch?.left||k.LEFT.isDown||k.A.isDown;const right=this.touch?.right||k.RIGHT.isDown||k.D.isDown;const jump=this.touch?.jump||k.UP.isDown||k.W.isDown||k.SPACE.isDown;const body=this.player.body;
     body.setVelocityX(left===right?0:left?-185:185);if(jump&&body.blocked.down&&!this.jumpHeld){this.player.setVelocityY(-430);this.tone('jump');}this.jumpHeld=!!jump;
     for(const e of this.enemies.getChildren()){if(!e.active)continue;if(e.x<=e.patrol.min){e.x=e.patrol.min;e.direction=1;}else if(e.x>=e.patrol.max){e.x=e.patrol.max;e.direction=-1;}e.setVelocityX(e.direction*this.level.speed);}
-    if(this.player.y>H+75)this.hurt();
+    if(this.player.y>H+75){this.hurt();if(this.player.active&&this.health>0)this.player.setY(H-42);}
   }
 }
 const config={type:Phaser.AUTO,parent:'game',width:W,height:H,backgroundColor:'#241044',physics:{default:'arcade',arcade:{gravity:{y:1050},debug:false}},scale:{mode:Phaser.Scale.FIT,autoCenter:Phaser.Scale.CENTER_BOTH},input:{activePointers:4},scene:[Adventure]};
